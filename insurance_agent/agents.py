@@ -4,12 +4,14 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
+from langchain_chroma import Chroma
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
+
 
 load_dotenv()
 
 
-llm = ChatGoogleGenerativeAI(model="gemini-1.5-pro", temperature=0)
-
+llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0)
 
 class ExtractedClaim(BaseModel):
     procedure_code: str = Field(description="The CPT or ICD-10 medical procedure code")
@@ -24,10 +26,11 @@ class VerificationResult(BaseModel):
 def information_extraction_agent(state: ClaimState):
     print("Agent: Extracting hospital bill data...")
     
-    raw_bill_text = "Patient underwent a cardiovascular stress test (CPT-93015) on Oct 12th. Total cost: $450.00. Diagnosis: suspected arrhythmia."
+    # Read the dynamic bill text passed in from the evaluation script
+    raw_bill_text = state.get("claim_details", {}).get("raw_text", "")
     
     prompt = ChatPromptTemplate.from_messages([
-        ("system", "Extract the requested information from the bill text."),
+        ("system", "Extract the procedure code, cost, and diagnosis from the text."),
         ("user", "{bill_text}")
     ])
     
@@ -39,13 +42,29 @@ def information_extraction_agent(state: ClaimState):
     return {"claim_details": extracted_data.dict()}
 
 def planner_retrieval_agent(state: ClaimState):
-    print("Agent: Retrieving relevant policy clauses...")
+    print("Agent: Retrieving relevant policy clauses from vector database...")
     
-    mock_retrieved_chunks = [
-        "[Page 14, Paragraph 2]: Cardiovascular stress tests (CPT-93015) are covered up to a maximum of $300.00.",
-        "[Page 15, Paragraph 1]: Diagnostic tests for arrhythmia are subject to a 20% co-pay."
-    ]
-    return {"retrieved_policy_chunks": mock_retrieved_chunks}
+    # Load the existing database
+    embeddings = GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-001")
+    vectorstore = Chroma(
+        persist_directory="./chroma_db", 
+        embedding_function=embeddings,
+        collection_name="insurance_policies"
+    )
+    
+    # Formulate a search query based on the extracted hospital bill
+    procedure_code = state.get("claim_details", {}).get("procedure_code", "")
+    diagnosis = state.get("claim_details", {}).get("diagnosis", "")
+    query = f"What are the coverage rules, limits, and co-pays for procedure {procedure_code} and diagnosis {diagnosis}?"
+    
+    # Retrieve the top 5 most relevant chunks
+    retriever = vectorstore.as_retriever(search_kwargs={"k": 5})
+    docs = retriever.invoke(query)
+    
+    retrieved_chunks = [doc.page_content for doc in docs]
+    print(f"Agent: Found {len(retrieved_chunks)} relevant clauses.")
+    
+    return {"retrieved_policy_chunks": retrieved_chunks}
 
 def adjudication_agent(state: ClaimState):
     print("Agent: Drafting adjudication decision...")

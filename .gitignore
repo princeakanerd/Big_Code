@@ -18,3 +18,5 @@ insuarance_agent__env/
 *.pdf
 *.txt
 insurance_agent/data/
+insurance_agent/chroma_db/
+
