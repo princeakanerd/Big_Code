@@ -1,8 +1,6 @@
 from main import app
 import time
 
-# 1. Define our Synthetic Test Suite
-# This represents a proxy dataset of medical bills [1]
 test_suite = [
     {
         "id": "Claim-001",
@@ -28,28 +26,22 @@ def run_evaluation():
     for test in test_suite:
         print(f"--- Processing {test['id']} ---")
         
-        # Initialize the state with the raw text
         initial_state = {
             "claim_details": {"raw_text": test["raw_text"]}
         }
         
-        # Run the claim through our LangGraph Multi-Agent framework
         try:
             final_state = app.invoke(initial_state)
             ai_decision_text = final_state.get("draft_decision", "")
             final_status = final_state.get("final_status", "")
             
-            # Check if the Judge Agent caught any hallucinations during the loop
             errors = final_state.get("errors", [])
             if errors:
                 hallucinations_caught += 1
                 
-            # Basic heuristic to check if the AI made the correct decision
-            # (In a production system, you'd use an LLM-as-a-Judge to evaluate the semantic meaning)
             ai_approved = "approve" in ai_decision_text.lower() or "covered up to a maximum" in ai_decision_text.lower() and test["expected_outcome"].lower() == "approve"
             expected_approved = test["expected_outcome"].lower() == "approve"
             
-            # Adjusting exact match logic simply just to avoid false negative heuristic check.
             if ai_approved == expected_approved or ("limit" in ai_decision_text.lower() and test["expected_outcome"]=="Reject"):
                 exact_matches += 1
                 print(f"Result: SUCCESS (Exact Match). Final Status: {final_status}")
@@ -61,9 +53,8 @@ def run_evaluation():
         except Exception as e:
             print(f"Error processing claim: {e}\n")
             
-        time.sleep(2) # Brief pause to avoid API rate limits
+        time.sleep(10) 
         
-    # 2. Calculate and Display Final Metrics
     accuracy_rate = (exact_matches / total_cases) * 100
     
     print("==================================================")

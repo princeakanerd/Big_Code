@@ -7,11 +7,17 @@ from typing import List
 from parser import parse_and_chunk_policy
 import os
 from dotenv import load_dotenv
+from tenacity import retry, wait_exponential, stop_after_attempt
 
 load_dotenv()
 
-# We will use Flash for faster processing
-llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0)
+@retry(wait=wait_exponential(multiplier=1, min=4, max=10), stop=stop_after_attempt(5))
+def safe_invoke(chain, payload):
+    """Executes a LangChain invoke with exponential backoff for 429 rate limits."""
+    return chain.invoke(payload)
+
+
+llm = ChatGoogleGenerativeAI(model="gemini-3.1-flash-lite-preview", temperature=0)
 
 class KnowledgeTriplet(BaseModel):
     subject: str = Field(description="The primary entity (e.g., CPT-93015, Cardiovascular stress test)")
@@ -37,11 +43,9 @@ def build_knowledge_graph(pdf_path: str, save_path: str = "knowledge_graph.pkl")
     for chunk in chunks:
         print(f"GraphRAG: Processing chunk... {chunk[:50]}...")
         try:
-            result = (prompt | extractor).invoke({"chunk": chunk})
+            result = safe_invoke(prompt | extractor, {"chunk": chunk})
             
             for t in result.triplets:
-                # Add nodes and edges, embedding the original chunk directly onto the edge 
-                # to preserve the Docling spatial citation [Page X] for our Streamlit UI
                 G.add_node(t.subject.lower())
                 G.add_node(t.object_.lower())
                 G.add_edge(t.subject.lower(), t.object_.lower(), 
@@ -50,7 +54,6 @@ def build_knowledge_graph(pdf_path: str, save_path: str = "knowledge_graph.pkl")
         except Exception as e:
             print(f"Error extracting triplets from chunk: {e}")
             
-    # Serialize the graph
     with open(save_path, 'wb') as f:
         pickle.dump(G, f)
         

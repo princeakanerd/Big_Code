@@ -7,9 +7,15 @@ from dotenv import load_dotenv
 import networkx as nx
 import pickle
 import os
-
+from tenacity import retry, wait_exponential, stop_after_attempt
 
 load_dotenv()
+
+@retry(wait=wait_exponential(multiplier=1, min=4, max=10), stop=stop_after_attempt(5))
+def safe_invoke(chain, payload):
+    """Executes a LangChain invoke with exponential backoff for 429 rate limits."""
+    return chain.invoke(payload)
+
 
 
 llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0)
@@ -31,10 +37,8 @@ class VerificationResult(BaseModel):
 def information_extraction_agent(state: ClaimState):
     print("Agent: Extracting hospital bill data...")
     
-    # Read the dynamic bill text passed in from the evaluation script
     raw_bill_text = state.get("claim_details", {}).get("raw_text", "")
     
-    # 1. Proposal Agent
     prompt = ChatPromptTemplate.from_messages([
         ("system", "Extract the procedure code, cost, and diagnosis from the text."),
         ("user", "{bill_text}")
@@ -43,9 +47,8 @@ def information_extraction_agent(state: ClaimState):
     extractor_llm = llm.with_structured_output(ExtractedClaim)
     chain = prompt | extractor_llm
     
-    extracted_data = chain.invoke({"bill_text": raw_bill_text})
+    extracted_data = safe_invoke(chain, {"bill_text": raw_bill_text})
     
-    # 2. Quality Controller Agent (Agentic Filter)
     print(f"Agent: Auditing extracted candidate code: {extracted_data.procedure_code}...")
     qa_prompt = ChatPromptTemplate.from_messages([
         ("system", "You are a stringent medical auditing agent. Review the proposed procedure code against the raw hospital bill. If the code is hallucinatory or unsupported by the text, flag it as invalid. Normalizing formats like 93015 to CPT-93015 is acceptable."),
@@ -55,7 +58,7 @@ def information_extraction_agent(state: ClaimState):
     auditor_llm = llm.with_structured_output(CodeValidationResult)
     qa_chain = qa_prompt | auditor_llm
     
-    audit_result = qa_chain.invoke({
+    audit_result = safe_invoke(qa_chain, {
         "bill_text": raw_bill_text,
         "proposed_code": extracted_data.procedure_code
     })
@@ -87,17 +90,14 @@ def planner_retrieval_agent(state: ClaimState):
     if procedure_code: search_terms.append(procedure_code)
     if diagnosis: search_terms.append(diagnosis)
     
-    # Simple multi-hop traversal: find any node containing the search term as substring
     relevant_chunks = set()
     
     for node in G.nodes():
         for term in search_terms:
             if term in node:
-                # Collect edges connected to this node
                 for u, v, data in G.edges(node, data=True):
                     if "source_chunk" in data:
                         relevant_chunks.add(data["source_chunk"])
-                # Get incoming edges too
                 for u, v, data in G.in_edges(node, data=True):
                     if "source_chunk" in data:
                         relevant_chunks.add(data["source_chunk"])
@@ -116,7 +116,7 @@ def adjudication_agent(state: ClaimState):
     ])
     
     chain = prompt | llm
-    response = chain.invoke({
+    response = safe_invoke(chain, {
         "claim": state.get("claim_details"),
         "chunks": "\n".join(state.get("retrieved_policy_chunks"))
     })
@@ -134,7 +134,7 @@ def citation_verifier_agent(state: ClaimState):
     verifier_llm = llm.with_structured_output(VerificationResult)
     chain = prompt | verifier_llm
     
-    result = chain.invoke({
+    result = safe_invoke(chain, {
         "chunks": "\n".join(state.get("retrieved_policy_chunks")),
         "draft": state.get("draft_decision")
     })

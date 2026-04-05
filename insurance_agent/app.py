@@ -1,5 +1,5 @@
 import streamlit as st
-import fitz  # PyMuPDF
+import fitz  
 import re
 import os
 from main import app as agent_app
@@ -16,43 +16,35 @@ def render_pdf_with_highlights(pdf_path, chunks):
         doc = fitz.open(pdf_path)
         pages_to_render = set()
         
-        # Iterate over all chunks found by the state graph
         for chunk in chunks:
-            # Parse out the page number and text
-            # Format: "[Page 1]: Cardiovascular Services Section..."
             match = re.match(r"\[Page (\w+)\]:\s*(.*)", chunk)
             if match:
                 page_str, text_to_find = match.groups()
                 
-                # Assume page string represents a 1-indexed number
                 page_num = 0
                 if page_str.isdigit():
-                    page_num = int(page_str) - 1 # PyMuPDF is 0-indexed
+                    page_num = int(page_str) - 1 
                 
-                # Protect bounds
                 if 0 <= page_num < len(doc):
                     page = doc[page_num]
                     pages_to_render.add(page_num)
                     
-                    # Highlight the targeted text chunk exactly
-                    # Strip to help search matching
-                    search_term = text_to_find[:50].strip() # Check first portion of the matched sub-clause
+                    search_term = text_to_find[:50].strip() 
                     text_instances = page.search_for(search_term)
                     
                     if not text_instances and len(search_term.split()) > 0:
-                        # Fallback to the first word
                         text_instances = page.search_for(search_term.split()[0])
                         
                     for inst in text_instances:
                         highlight = page.add_highlight_annot(inst)
                         if highlight:
-                            highlight.set_colors(stroke=(1, 1, 0)) # Yellow box
+                            highlight.set_colors(stroke=(1, 1, 0)) 
                             highlight.update()
         
         rendered_images = []
         for page_num in sorted(pages_to_render):
             page = doc[page_num]
-            pix = page.get_pixmap(matrix=fitz.Matrix(2, 2)) # Zoom for high-res
+            pix = page.get_pixmap(matrix=fitz.Matrix(2, 2)) 
             img_data = pix.tobytes("png")
             rendered_images.append((page_num + 1, img_data))
             
@@ -63,7 +55,6 @@ def render_pdf_with_highlights(pdf_path, chunks):
         return None
 
 
-# --- DASHBOARD LAYOUT ---
 st.title("Human-in-the-Loop Insurance Adjudication")
 
 col1, col2 = st.columns([1, 1])
@@ -84,13 +75,11 @@ with col1:
             
             try:
                 final_state = agent_app.invoke(initial_state)
-                # Store in session state so it persists across button clicks
                 st.session_state['final_state'] = final_state
                 st.success("Workflow Complete!")
             except Exception as e:
                 st.error(f"Error executing agent workflow: {e}")
 
-    # Display results if available
     if 'final_state' in st.session_state:
         state = st.session_state['final_state']
         
@@ -122,7 +111,7 @@ with col2:
         chunks = st.session_state['final_state'].get("retrieved_policy_chunks", [])
         if chunks:
             st.markdown("**(System automatically overlaid reasoning based on exact text attribution)**")
-            pdf_path = "data/sample_policy.pdf" # Path relative to where we run streamit
+            pdf_path = "data/sample_policy.pdf" 
             images = render_pdf_with_highlights(pdf_path, chunks)
             
             if images:
